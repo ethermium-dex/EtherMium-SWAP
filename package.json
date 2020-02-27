@@ -1,11 +1,22 @@
 {
   "name": "etm",
   "version": "1.0.0",
-  "description": "",
   "main": "ptokens_tests.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ethermium-dex/EtherMium-SWAP.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ethermium-dex/EtherMium-SWAP/issues"
+  },
+  "homepage": "https://github.com/ethermium-dex/EtherMium-SWAP#readme",
+  "description": "",
+  "dependencies": {
+    "web3": "^1.2.6"
+  }
 }
