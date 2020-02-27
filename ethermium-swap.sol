@@ -65,6 +65,21 @@ contract UniswapExchangeInterface {
     function setup(address token_addr) external;
 }
 
+
+contract UniswapFactoryInterface {
+    // Public Variables
+    address public exchangeTemplate;
+    uint256 public tokenCount;
+    // Create Exchange
+    function createExchange(address token) external returns (address exchange);
+    // Get Exchange and Token Info
+    function getExchange(address token) external view returns (address exchange);
+    function getToken(address exchange) external view returns (address token);
+    function getTokenWithId(uint256 tokenId) external view returns (address token);
+    // Never use
+    function initializeFactory(address template) external;
+}
+
 /* Interface for pTokens contract */
 contract pToken {
     function redeem(uint256 _value, string memory _btcAddress) public returns (bool _success);
@@ -125,11 +140,8 @@ contract EtherMium_Atomic_Swap_DEX {
         return owner;
     }
 
-
-    mapping (address => mapping (address => uint256)) public balances; // mapping of token addresses to mapping of balances and reserve (bitwise compressed) // balances[token][user]
-    mapping (address => address) public uniswapExchange; // mapping of tokens to uniswap exchange
-
     address public feeAccount; // ethermium fees go to this account
+    address public uniswapFactory; // the Uniswap Factory address
     uint256 public swapFee = 2e15; // pct swap fee * 1e18 (0.002 * 1e18)
 
     bool public feeAccountChangeDisabled = false;
@@ -154,9 +166,10 @@ contract EtherMium_Atomic_Swap_DEX {
     event FeeChange(uint256 indexed newSwapFee);
 
     // Constructor function, initializes the contract and sets the core variables
-    function EtherMium_Atomic_Swap_DEX(address feeAccount_) {
+    function EtherMium_Atomic_Swap_DEX(address feeAccount_, address uniswapFactory_) {
         owner = msg.sender;
         feeAccount = feeAccount_;
+        uniswapFactory = uniswapFactory_;
     }
 
     // Change fee account
@@ -224,7 +237,7 @@ contract EtherMium_Atomic_Swap_DEX {
     // Swap ETH -> pToken
     function swapETHtoPToken (address token, string destinationAddress) public payable returns (uint256 amount)
     {
-        if (uniswapExchange[token] == address(0)) revert(); // no uniswap exchange set for token
+        address uniswapExchange = UniswapFactoryInterface(uniswapFactory).getExchange(token);
         uint256 ethAmount = msg.value;
 
         // deduct swap fee
@@ -232,7 +245,7 @@ contract EtherMium_Atomic_Swap_DEX {
         uint256 netEthAmount = safeSub(ethAmount, fee);
 
         // swap eth for pToken
-        uint256 ptokens_bought = UniswapExchangeInterface(uniswapExchange[address(0)]).ethToTokenSwapInput.value(netEthAmount)(1, 2**256 - 1);
+        uint256 ptokens_bought = UniswapExchangeInterface(uniswapExchange).ethToTokenSwapInput.value(netEthAmount)(1, 2**256 - 1);
     
         // redeem pTokens
         if (!pToken(token).redeem(ptokens_bought, destinationAddress))
@@ -247,14 +260,14 @@ contract EtherMium_Atomic_Swap_DEX {
     // Swap ERC20 Token -> ETH
     function swapERC20TokenToETH (address token, uint256 tokenAmount, address destinationAddress) public returns (uint256 amount)
     {
-        if (uniswapExchange[token] == address(0)) revert(); // no uniswap exchange set for token
+        address uniswapExchange = UniswapFactoryInterface(uniswapFactory).getExchange(token);
         
         // retrieve token (must be approved first)
         if (!ERC20Interface(token).transferFrom(msg.sender, this, tokenAmount)) revert(); 
 
         // convert token to ETH
-        ERC20Interface(token).approve(uniswapTokenContracts[token], tokenAmount);
-        uint256 ethAmount = UniswapExchangeInterface(uniswapTokenContracts[token]).tokenToEthSwapInput(tokenAmount, 1, 2**256 - 1);
+        ERC20Interface(token).approve(uniswapExchange, tokenAmount);
+        uint256 ethAmount = UniswapExchangeInterface(uniswapExchange).tokenToEthSwapInput(tokenAmount, 1, 2**256 - 1);
 
         // deduct swap fee
         uint256 fee = safeMul(ethAmount, swapFee) / 1e18;
@@ -269,7 +282,7 @@ contract EtherMium_Atomic_Swap_DEX {
     // Swap ETH -> ERC20 Token
     function swapETHtoERC20Token (address token, address destinationAddress) public payable returns (uint256 amount)
     {
-        if (uniswapExchange[token] == address(0)) revert(); // no uniswap exchange set for token
+        address uniswapExchange = UniswapFactoryInterface(uniswapFactory).getExchange(token);
         uint256 ethAmount = msg.value;
 
         // deduct swap fee
@@ -277,11 +290,36 @@ contract EtherMium_Atomic_Swap_DEX {
         uint256 netEthAmount = safeSub(ethAmount, fee);
 
         // swap eth for pToken
-        uint256 tokens_bought = UniswapExchangeInterface(uniswapExchange[address(0)]).ethToTokenSwapInput.value(netEthAmount)(1, 2**256 - 1);
+        uint256 tokens_bought = UniswapExchangeInterface(uniswapExchange).ethToTokenSwapInput.value(netEthAmount)(1, 2**256 - 1);
     
         // send token to destination address
         if (!ERC20Interface(token).transfer(destinationAddress, tokens_bought)) revert();
 
         return tokens_bought;
-    }    
+    }  
+
+    // Swap ERC20 TOken -> ERC20 Token
+    function swapERC20TokentoERC20Token (address tokenIn, uint256 tokenInAmount, address tokenOut, address destinationAddress) public payable returns (uint256 amount)
+    {
+        address uniswapExchange = UniswapFactoryInterface(uniswapFactory).getExchange(tokenIn);
+       
+        // retrieve token (must be approved first)
+        if (!ERC20Interface(token).transferFrom(msg.sender, this, tokenAmount)) revert(); 
+
+        uint256 ethAmount = msg.value;
+
+        // deduct swap fee
+        uint256 fee = safeMul(ethAmount, swapFee) / 1e18;
+        uint256 netEthAmount = safeSub(ethAmount, fee);
+
+        // swap eth for pToken
+
+        // tokenToTokenSwapInput(uint256 tokens_sold, uint256 min_tokens_bought, uint256 min_eth_bought, uint256 deadline, address token_addr) external returns (uint256  tokens_bought);
+        uint256 tokens_bought = UniswapExchangeInterface(uuniswapExchange).tokenToTokenSwapInput(tokenInAmount, 1, 1, 2**256 - 1, tokenOut);
+    
+        // send token to destination address
+        if (!ERC20Interface(tokenOut).transfer(destinationAddress, tokens_bought)) revert();
+
+        return tokens_bought;
+    }   
 }
