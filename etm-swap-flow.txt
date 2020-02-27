@@ -1,0 +1,20 @@
+
+
+1. User chooses swap direction (BTC -> ETH or ETH -> BTC)
+
+## ETH -> BTC
+2. SPA generates depositContract address
+3. SPA sends depositContract address and bytecode to backend
+4. SPA shows depositContract address to user (after successful response from backend)
+5. backend watches depositContract address
+6. when ETH arrive in depositAddress, backend sends tx from operational wallet to deploy depositContract
+
+
+
+## BTC -> ETH
+2. SPA compiles depositContract 
+3. SPA requets btcDepositAddress from ptokens
+4. SPA sends depositContract bytecode, depositContract address and btcDepositAddress to backend
+5. Backend watches pBTC contract transfer event
+6. if transfer to depositContract address, backend sends tx from operational wallet to deploy depositContract
+
