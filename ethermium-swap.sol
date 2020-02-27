@@ -65,7 +65,6 @@ contract UniswapExchangeInterface {
     function setup(address token_addr) external;
 }
 
-
 contract UniswapFactoryInterface {
     // Public Variables
     address public exchangeTemplate;
@@ -81,7 +80,7 @@ contract UniswapFactoryInterface {
 }
 
 /* Interface for pTokens contract */
-contract pToken {
+contract pTokensInterface {
     function redeem(uint256 _value, string memory _btcAddress) public returns (bool _success);
 }
 
@@ -123,9 +122,9 @@ contract EtherMium_Atomic_Swap_DEX {
         _;
     }
 
-    // Allows only the feeAccount to execute the function
+    // Allows only the swapFeeAccount to execute the function
     modifier onlyFeeAccount {
-        assert(msg.sender == feeAccount);
+        assert(msg.sender == swapFeeAccount);
         _;
     }
 
@@ -140,15 +139,21 @@ contract EtherMium_Atomic_Swap_DEX {
         return owner;
     }
 
-    address public feeAccount; // ethermium fees go to this account
-    address public uniswapFactory; // the Uniswap Factory address
-    uint256 public swapFee = 2e15; // pct swap fee * 1e18 (0.002 * 1e18)
+    address public gasFeeAccount; // gas fees go to this account
+    address public swapFeeAccount; // swap fees go to this account
 
-    bool public feeAccountChangeDisabled = false;
+
+    address public uniswapFactory; // the Uniswap Factory address
+    uint256 public swapFee; // pct swap fee * 1e18 (0.003 * 1e18 = 0.3%)
+    uint256 public gasFee; // gas fee in ETH
+
+    bool public swapFeeAccountChangeDisabled = false; // when set to True, the swap fee account cannot be changed
 
     bool public destroyed = false; // contract is destoryed
     uint256 public destroyDelay = 1000000; // number of blocks after destroy contract still active (aprox 6 monthds)
     uint256 public destroyBlock;
+
+    
 
     // Deposit event fired when a deposit takes place
     event Deposit(address indexed token, address indexed user, uint256 amount, uint256 balance);
@@ -166,22 +171,25 @@ contract EtherMium_Atomic_Swap_DEX {
     event FeeChange(uint256 indexed newSwapFee);
 
     // Constructor function, initializes the contract and sets the core variables
-    function EtherMium_Atomic_Swap_DEX(address feeAccount_, address uniswapFactory_) {
+    function EtherMium_Atomic_Swap_DEX(address gasFeeAccount_, address swapFeeAccount_, address uniswapFactory_, uint256 swapFee_, uint256 gasFee_) {
         owner = msg.sender;
-        feeAccount = feeAccount_;
+        gasFeeAccount = gasFeeAccount_;
+        swapFeeAccount = swapFeeAccount_;
         uniswapFactory = uniswapFactory_;
+        swapFee = swapFee_;
+        gasFee = gasFee_;
     }
 
     // Change fee account
-    function changeFeeAccount (address feeAccount_) onlyOwner {
-        if (feeAccountChangeDisabled) revert();
-        feeAccount = feeAccount_;
-        emit FeeAccountChanged(feeAccount_);
+    function changeFeeAccount (address swapFeeAccount_) onlyOwner {
+        if (swapFeeAccountChangeDisabled) revert();
+        swapFeeAccount = swapFeeAccount_;
+        emit FeeAccountChanged(swapFeeAccount_);
     }
 
     // Changes the fees
-    function setFees(uint256 swapFee_) onlyOwner {
-        require(swapFee_      < 10 finney); // The fees cannot be set higher then 1%
+    function setSwapFee(uint256 swapFee_) onlyOwner {
+        require(swapFee_      < 10 finney); // The fee cannot be set higher than 1%
         swapFee = swapFee_;
 
         emit FeeChange(swapFee);
@@ -189,7 +197,7 @@ contract EtherMium_Atomic_Swap_DEX {
 
     // Disable future fee account change
     function disableFeeAccountChange() onlyOwner {
-        feeAccountChangeDisabled = true;
+        swapFeeAccountChangeDisabled = true;
     }
 
     // Sets the inactivity period before a user can withdraw funds manually
@@ -237,18 +245,22 @@ contract EtherMium_Atomic_Swap_DEX {
     // Swap ETH -> pToken
     function swapETHtoPToken (address token, string destinationAddress) public payable returns (uint256 amount)
     {
+        if (msg.value < gasFee) revert();
+
         address uniswapExchange = UniswapFactoryInterface(uniswapFactory).getExchange(token);
         uint256 ethAmount = msg.value;
 
         // deduct swap fee
-        uint256 fee = safeMul(ethAmount, swapFee) / 1e18;
-        uint256 netEthAmount = safeSub(ethAmount, fee);
+        uint256 fee = safeMul(safeSub(ethAmount, gasFee), swapFee) / 1e18;
+        uint256 netEthAmount = safeSub(safeSub(ethAmount, gasFee), fee);
+
+        gasFeeAccount.send(gasFee);
 
         // swap eth for pToken
         uint256 ptokens_bought = UniswapExchangeInterface(uniswapExchange).ethToTokenSwapInput.value(netEthAmount)(1, 2**256 - 1);
     
         // redeem pTokens
-        if (!pToken(token).redeem(ptokens_bought, destinationAddress))
+        if (!pTokensInterface(token).redeem(ptokens_bought, destinationAddress))
         {
             revert();
         }
@@ -269,9 +281,13 @@ contract EtherMium_Atomic_Swap_DEX {
         ERC20Interface(token).approve(uniswapExchange, tokenAmount);
         uint256 ethAmount = UniswapExchangeInterface(uniswapExchange).tokenToEthSwapInput(tokenAmount, 1, 2**256 - 1);
 
+        if (ethAmount < gasFee) revert();
+
+        if (!gasFeeAccount.send(gasFee)) revert();
+
         // deduct swap fee
-        uint256 fee = safeMul(ethAmount, swapFee) / 1e18;
-        uint256 netEthAmount = safeSub(ethAmount, fee);
+        uint256 fee = safeMul(safeSub(ethAmount, gasFee), swapFee) / 1e18;
+        uint256 netEthAmount = safeSub(safeSub(ethAmount, gasFee), fee);
 
         if (!destinationAddress.send(netEthAmount)) revert();
 
@@ -282,44 +298,58 @@ contract EtherMium_Atomic_Swap_DEX {
     // Swap ETH -> ERC20 Token
     function swapETHtoERC20Token (address token, address destinationAddress) public payable returns (uint256 amount)
     {
+        if (msg.value < gasFee) revert();
+
         address uniswapExchange = UniswapFactoryInterface(uniswapFactory).getExchange(token);
         uint256 ethAmount = msg.value;
 
-        // deduct swap fee
-        uint256 fee = safeMul(ethAmount, swapFee) / 1e18;
-        uint256 netEthAmount = safeSub(ethAmount, fee);
 
-        // swap eth for pToken
+        // deduct gas fee
+        uint256 netEthAmount = safeSub(ethAmount, gasFee);
+
+        if (!gasFeeAccount.send(gasFee)) revert();
+
+        // swap eth for erc20 token
         uint256 tokens_bought = UniswapExchangeInterface(uniswapExchange).ethToTokenSwapInput.value(netEthAmount)(1, 2**256 - 1);
     
+        // deduct swap fee
+        uint256 fee = safeMul(tokens_bought, swapFee) / 1e18;
+
         // send token to destination address
-        if (!ERC20Interface(token).transfer(destinationAddress, tokens_bought)) revert();
+        if (!ERC20Interface(token).transfer(destinationAddress, safeSub(tokens_bought, fee))) revert();
 
         return tokens_bought;
     }  
 
-    // Swap ERC20 TOken -> ERC20 Token
+    // Swap ERC20 Token -> ERC20 Token
     function swapERC20TokentoERC20Token (address tokenIn, uint256 tokenInAmount, address tokenOut, address destinationAddress) public payable returns (uint256 amount)
     {
-        address uniswapExchange = UniswapFactoryInterface(uniswapFactory).getExchange(tokenIn);
+        address inUniswapExchange = UniswapFactoryInterface(uniswapFactory).getExchange(tokenIn);
        
         // retrieve token (must be approved first)
-        if (!ERC20Interface(token).transferFrom(msg.sender, this, tokenAmount)) revert(); 
+        if (!ERC20Interface(token).transferFrom(msg.sender, this, tokenInAmount)) revert(); 
 
-        uint256 ethAmount = msg.value;
+        // swap token to 
+        ERC20Interface(tokenIn).approve(inUniswapExchange, tokenInAmount);
+        uint256 ethAmount = UniswapExchangeInterface(inUniswapExchange).tokenToEthSwapInput(tokenInAmount, 1, 2**256 - 1);
+
 
         // deduct swap fee
-        uint256 fee = safeMul(ethAmount, swapFee) / 1e18;
-        uint256 netEthAmount = safeSub(ethAmount, fee);
+        uint256 netEthAmount = safeSub(ethAmount, gasFee);
 
-        // swap eth for pToken
+        if (!gasFeeAccount.send(gasFee)) revert();
 
-        // tokenToTokenSwapInput(uint256 tokens_sold, uint256 min_tokens_bought, uint256 min_eth_bought, uint256 deadline, address token_addr) external returns (uint256  tokens_bought);
-        uint256 tokens_bought = UniswapExchangeInterface(uuniswapExchange).tokenToTokenSwapInput(tokenInAmount, 1, 1, 2**256 - 1, tokenOut);
-    
+        address outUniswapExchange = UniswapFactoryInterface(uniswapFactory).getExchange(tokenIn);
+
+        // swap eth for erc20token
+        uint256 tokens_bought = UniswapExchangeInterface(outUniswapExchange).ethToTokenSwapInput.value(netEthAmount)(1, 2**256 - 1);
+
+        // compute swap fee
+        uint256 fee = safeMul(tokens_bought, swapFee) / 1e18;
+
         // send token to destination address
-        if (!ERC20Interface(tokenOut).transfer(destinationAddress, tokens_bought)) revert();
+        if (!ERC20Interface(tokenOut).transfer(destinationAddress, safeSub(tokens_bought, fee))) revert();
 
         return tokens_bought;
-    }   
+    }  
 }

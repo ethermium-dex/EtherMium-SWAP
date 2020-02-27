@@ -1,6 +1,7 @@
 var dmexContract = '0x1677F52cfD5D40e3e32803884031435a78370aA4';
 var tokenAddress = '0xC93dCe4D4985Bf5dfa7a85498f56AeC33A6e0Ef2';
 var owner = '0x95445852148540acB6FcB9e39856D15F1C416381';
+var factoryAddress = '0x408AD646a3a3eBebCf8eaefFBBDb35A4D05EFd77';
 let Web3 = require('web3');
 const solc = require('solc');
 const path = require('path');
@@ -22,17 +23,12 @@ class Tester {
 
     constructor()
     {
-    	var contractCode = this.generateContractCode(owner, tokenAddress, dmexContract);
-    	
-    	this.factoryAddress = '0x408AD646a3a3eBebCf8eaefFBBDb35A4D05EFd77';
-        this.init(contractCode);        
+        this.init();        
     }
 
     async init(contractCode)
     {
-    	this.depositContractBytecode = await this.compileContract(contractCode);
-    	console.log('test');
-    	console.log(await this.computeBtcDepositAddress(tokenAddress));
+    	console.log(await this.computeBtcDepositAddress(owner, tokenAddress, dmexContract, factoryAddress));
     }
 
     generateContractCode(owner, token, dmexContract)
@@ -104,15 +100,19 @@ class Tester {
 	  	return code.slice(2).length > 0
 	}
 
-	async computeBtcDepositAddress(tokenAddress)
+	async computeBtcDepositAddress(owner, tokenAddress, dmexContract, factoryAddress)
 	{
+		var contractCode = this.generateContractCode(owner, tokenAddress, dmexContract);
+
+		var depositContractBytecode = await this.compileContract(contractCode);
+
 
 		// constructor arguments are appended to contract bytecode
-		const bytecode = `${this.depositContractBytecode}${this.encodeParam('address', tokenAddress).slice(2)}`
+		const bytecode = `${depositContractBytecode}${this.encodeParam('address', tokenAddress).slice(2)}`
 		const salt = 1
 
 		const computedAddr = this.buildCreate2Address(
-		  this.factoryAddress,
+		  factoryAddress,
 		  this.numberToUint256(salt),
 		  bytecode
 		);
