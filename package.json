@@ -17,6 +17,9 @@
   "homepage": "https://github.com/ethermium-dex/EtherMium-SWAP#readme",
   "description": "",
   "dependencies": {
+    "lodash": "^4.17.15",
+    "ptokens": "^0.3.1",
+    "solc": "^0.5.0",
     "web3": "^1.2.6"
   }
 }
